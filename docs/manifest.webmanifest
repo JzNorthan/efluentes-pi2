@@ -1,0 +1,9 @@
+{
+  "name": "Efluentes PI2 — Panel de control",
+  "short_name": "Efluentes PI2",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0E1A1F",
+  "theme_color": "#0E1A1F",
+  "icons": [{ "src": "icono.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
