@@ -22,6 +22,8 @@ Monitor Serie a 115200. Los comandos son los mismos desde el Monitor Serie y des
 
 ## Panel
 
+**Dirección:** https://jznorthan.github.io/efluentes-pi2/
+
 Página estática que se conecta al broker por WebSocket seguro (`wss://…:8084/mqtt`). Se entra con el usuario `panel` del broker. No guarda contraseñas en el código: se escriben en la pantalla de acceso y, si se marca *Recordar*, quedan solo en ese navegador.
 
 Secciones: Centro de control, Gráficas (5 min a 7 días, marcas, CSV), Control (pruebas de LEDs, buzzer, pantalla, válvulas, autoprueba), Umbrales (rubros, personalizado, calibración), Registro (filtros, búsqueda, CSV) y Diagnóstico (Wi-Fi, memoria, reinicios, sensores). En el celular, Umbrales y Diagnóstico están juntos en *Ajustes*.
