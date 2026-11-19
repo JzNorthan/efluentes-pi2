@@ -150,3 +150,4 @@ dialog .acciones { display: flex; gap: 8px; justify-content: flex-end; margin-to
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 #vista { display: flex; flex-direction: column; gap: 18px; }
 @media (max-width: 900px) { #vista { gap: 12px; } }
+.lista li.vacio { display: block; }
