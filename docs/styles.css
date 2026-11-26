@@ -151,3 +151,69 @@ dialog .acciones { display: flex; gap: 8px; justify-content: flex-end; margin-to
 #vista { display: flex; flex-direction: column; gap: 18px; }
 @media (max-width: 900px) { #vista { gap: 12px; } }
 .lista li.vacio { display: block; }
+
+/* ===================================================================
+   v2.1 — Centro de control: estado grande, métricas con medidor,
+   válvulas como fichas, datos viejos atenuados.
+   =================================================================== */
+.hero { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px 32px;
+  padding: 22px 24px; border-radius: 14px; border: 1px solid var(--linea); background: var(--superficie); }
+.hero-txt { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.hero-rot { color: var(--texto-tenue); font-size: 14px; }
+.hero-estado { font-family: var(--fuente-num); font-size: 64px; font-weight: 600; line-height: .95; letter-spacing: -.01em; }
+.hero-motivo { font-size: 16px; color: var(--texto-2); max-width: 60ch; }
+.hero-meta { margin: 0; display: grid; grid-template-columns: repeat(4, auto); gap: 4px 28px; }
+.hero-meta div { display: flex; flex-direction: column; gap: 2px; }
+.hero-meta dt { color: var(--texto-tenue); font-size: 12px; }
+.hero-meta dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.hero.apta   { background: rgba(63,191,132,.09);  border-color: rgba(63,191,132,.45); }
+.hero.apta .hero-estado { color: var(--apta); }
+.hero.noapta { background: rgba(240,122,62,.10);  border-color: rgba(240,122,62,.5); }
+.hero.noapta .hero-estado { color: var(--no-apta); }
+.hero.falla  { background: rgba(227,179,65,.09);  border-color: rgba(227,179,65,.45); }
+.hero.falla .hero-estado { color: var(--falla); }
+.hero.sin-conexion { background: var(--superficie); border-style: dashed; border-color: var(--borde-control); }
+.hero.sin-conexion .hero-estado { color: var(--texto-tenue); }
+
+.metricas { display: grid; grid-template-columns: 1fr 1fr 1.3fr; gap: 18px; }
+.metrica, .valvulas { background: var(--superficie); border: 1px solid var(--linea); border-radius: var(--radio); padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+.rot { color: var(--texto-tenue); font-size: 13px; }
+.pie { color: var(--texto-tenue); font-size: 13px; font-variant-numeric: tabular-nums; }
+.valor { font-family: var(--fuente-num); font-size: 44px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
+.valor small { font-size: 20px; color: var(--texto-tenue); margin-left: 4px; font-weight: 500; }
+.medidor { position: relative; height: 8px; border-radius: 4px; background: var(--superficie-2); }
+.medidor .relleno { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 4px; background: var(--agua); transition: width .4s ease; }
+.medidor .relleno.alto { background: var(--no-apta); }
+.medidor .limite { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; background: var(--texto); border-radius: 1px; }
+
+.valvulas { display: grid; grid-template-columns: 1fr 1fr; align-content: start; }
+.valvulas .pie { grid-column: 1 / -1; }
+.valvula { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--linea); }
+.valv-estado { font-family: var(--fuente-num); font-size: 24px; font-weight: 600; color: var(--texto-tenue); }
+#valv-der.abierta { border-color: rgba(63,191,132,.6); background: rgba(63,191,132,.1); }
+#valv-der.abierta .valv-estado { color: var(--apta); }
+#valv-izq.abierta { border-color: rgba(240,122,62,.6); background: rgba(240,122,62,.1); }
+#valv-izq.abierta .valv-estado { color: var(--no-apta); }
+
+/* Datos que no están en vivo: atenuados (el héroe ya lo dice en texto) */
+.esp-offline .vivo:not(.hero) { opacity: .45; filter: saturate(.3); }
+.esp-offline .hero-meta { opacity: .7; }
+
+.panel { border-radius: var(--radio); }
+.panel h2 { font-size: 15px; font-weight: 600; letter-spacing: .01em; }
+.aviso { font-size: 14px; }
+
+@media (min-width: 901px) {
+  .fila > .orden-2 { order: 1; }
+  .fila > .orden-1 { order: 2; }
+}
+@media (max-width: 900px) {
+  .hero { padding: 18px; gap: 14px; }
+  .hero-estado { font-size: 46px; }
+  .hero-motivo { font-size: 15px; }
+  .hero-meta { grid-template-columns: 1fr 1fr; gap: 10px 16px; width: 100%; }
+  .metricas { grid-template-columns: 1fr 1fr; gap: 12px; }
+  .metricas .valvulas { grid-column: 1 / -1; }
+  .valor { font-size: 38px; }
+  .metrica, .valvulas { padding: 12px 14px; }
+}

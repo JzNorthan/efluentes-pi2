@@ -199,6 +199,7 @@ function alRecibir(topico, buffer) {
     case "conexion":     S.espConexion = d.estado; break;
     case "eventos":
       agregarEvento({ t: d.t ? d.t * 1000 : ahora, tipo: d.tipo, detalle: d.detalle, temp: d.temp, turb: d.turb, origen: d.origen });
+      if (S.actualizando && /Actualizacion fallida/.test(d.detalle || "")) { S.actualizando = null; aviso(d.detalle, "error"); }
       break;
     case "marcas":
       agregarEvento({ t: d.t || ahora, tipo: "Marca", detalle: d.texto, temp: S.lectura?.temp, turb: S.lectura?.turb, origen: d.origen });
@@ -418,38 +419,92 @@ function textoEstado() {
 }
 
 // ---------- Bloques reutilizables ----------
-function bloqueIndicadores() {
-  return `<div class="indicadores">
-    <div class="ind estado" id="ind-estado"><span class="tenue">Estado del agua</span><span class="grande" id="v-estado">—</span><span id="v-motivo" class="tenue"></span><span class="tenue num" id="v-desde"></span></div>
-    <div class="ind"><span class="tenue">Temperatura</span><span class="grande"><span id="v-temp">—</span> <small class="medio tenue">°C</small></span><span class="tenue num" id="v-temp-lim"></span><div id="spark-temp"></div></div>
-    <div class="ind"><span class="tenue">Turbidez</span><span class="grande"><span id="v-turb">—</span> <small class="medio tenue">%</small></span><span class="tenue num" id="v-turb-lim"></span><div id="spark-turb"></div></div>
-    <div class="ind ancho-cel"><span class="tenue">Válvulas</span>
-      <div class="valvula-fila"><span class="marca-valvula c-apta"><span class="cuadro" id="cuadro-der"></span>Derecha · apta</span><span id="v-der" class="num"></span></div>
-      <div class="valvula-fila"><span class="marca-valvula c-noapta"><span class="cuadro" id="cuadro-izq"></span>Izquierda · no apta</span><span id="v-izq" class="num"></span></div>
-      <span class="tenue num" id="v-valv-info"></span></div>
-  </div>`;
+/** "hoy 20:58", "ayer 20:58" o "24/11 20:58". */
+function cuando(ms) {
+  if (!ms) return "—";
+  const d = new Date(ms), hoy = new Date(), ayer = new Date(Date.now() - 86400e3);
+  const mismoDia = (x, y) => x.toDateString() === y.toDateString();
+  return `${mismoDia(d, hoy) ? "hoy" : mismoDia(d, ayer) ? "ayer" : fecha(ms)} ${hora(ms, false)}`;
 }
+/** Último momento en que se supo algo del ESP32 (lectura en vivo o mensaje retenido). */
+function ultimoDato() {
+  return Math.max(S.ultimaLectura || 0, (S.estado?.t || 0) * 1000, (S.diag?.t || 0) * 1000, S.diag?.recibido && S.ultimaLectura ? S.diag.recibido : 0);
+}
+const COLOR_ESTADO = { APTO: "apta", NO_APTO: "noapta", FALLA: "falla" };
+
+function bloqueIndicadores() {
+  return `<section class="hero vivo" id="hero" aria-live="polite">
+      <div class="hero-txt">
+        <span class="hero-rot" id="v-rot">Estado del agua</span>
+        <span class="hero-estado" id="v-estado">—</span>
+        <span class="hero-motivo" id="v-motivo"></span>
+      </div>
+      <dl class="hero-meta" id="v-meta"></dl>
+    </section>
+    <div class="metricas">
+      <div class="metrica vivo" id="m-temp"><span class="rot">Temperatura</span>
+        <span class="valor"><span id="v-temp">—</span><small>°C</small></span>
+        <div class="medidor" aria-hidden="true"><span class="relleno" id="r-temp"></span><span class="limite" id="l-temp"></span></div>
+        <span class="pie" id="v-temp-lim"></span></div>
+      <div class="metrica vivo" id="m-turb"><span class="rot">Turbidez</span>
+        <span class="valor"><span id="v-turb">—</span><small>%</small></span>
+        <div class="medidor" aria-hidden="true"><span class="relleno" id="r-turb"></span><span class="limite" id="l-turb"></span></div>
+        <span class="pie" id="v-turb-lim"></span></div>
+      <div class="valvulas vivo">
+        <div class="valvula" id="valv-der"><span class="rot">Derecha · descarga</span><span class="valv-estado" id="v-der">—</span></div>
+        <div class="valvula" id="valv-izq"><span class="rot">Izquierda · retención</span><span class="valv-estado" id="v-izq">—</span></div>
+        <span class="pie" id="v-valv-info"></span>
+      </div>
+    </div>`;
+}
+
+/** Llena un medidor horizontal: 0 a escala, con marca en el límite. */
+function medidor(idRelleno, idLimite, valor, limite, escala) {
+  const r = document.getElementById(idRelleno), l = document.getElementById(idLimite);
+  if (!r) return;
+  const pc = (v) => `${Math.max(0, Math.min(100, (v / escala) * 100))}%`;
+  r.style.width = valor === null || valor === undefined ? "0%" : pc(valor);
+  r.classList.toggle("alto", valor !== null && valor !== undefined && limite !== undefined && valor > limite);
+  if (l && limite !== undefined) l.style.left = pc(limite);
+}
+
 function actualizarIndicadores() {
-  const e = textoEstado(), c = S.config, l = S.lectura;
-  const ind = $("#ind-estado");
-  if (ind) ind.className = `ind estado estado-${S.estado?.estado ?? ""}`;
-  pon("v-estado", e.txt);
-  const ve = $("#v-estado"); if (ve) ve.className = `grande ${e.cls}`;
-  pon("v-motivo", e.motivo + (S.estado?.silenciada ? " · alarma silenciada" : ""));
-  pon("v-desde", S.estado?.desde ? `Desde ${hora(S.estado.desde * 1000)} · modo ${S.estado.modo === "MANUAL" ? "manual" : "automático"}` : S.estado ? `Modo ${S.estado.modo === "MANUAL" ? "manual" : "automático"}` : "");
+  const enLinea = espEnLinea(), e = textoEstado(), c = S.config, l = S.lectura, est = S.estado;
+  const hero = $("#hero");
+  if (!hero) return;
+  const ult = ultimoDato();
+  if (!enLinea && est) {
+    hero.className = "hero vivo sin-conexion";
+    pon("v-rot", S.conectado ? "ESP32 desconectado" : "Panel sin internet");
+    pon("v-estado", "Sin conexión");
+    pon("v-motivo", `Último estado conocido: ${e.txt}${ult ? ", " + cuando(ult) : ""}. Lo de abajo no está en vivo.`);
+  } else {
+    hero.className = `hero vivo ${COLOR_ESTADO[est?.estado] ?? "neutro"}`;
+    pon("v-rot", "Estado del agua");
+    pon("v-estado", e.txt);
+    pon("v-motivo", e.motivo + (est?.silenciada ? " · alarma silenciada" : ""));
+  }
+  const meta = $("#v-meta");
+  if (meta && est) {
+    const abierta = est.valvula === "DER" ? "Derecha (descarga)" : est.valvula === "IZQ" ? "Izquierda (retención)" : "Ninguna";
+    const html = `<div><dt>Modo</dt><dd>${est.modo === "MANUAL" ? "Manual" : "Automático"}</dd></div>
+      <div><dt>Desde</dt><dd>${est.desde ? cuando(est.desde * 1000) : "—"}</dd></div>
+      <div><dt>Válvula abierta</dt><dd>${abierta}</dd></div>
+      <div><dt>${enLinea ? "Lectura" : "Último dato"}</dt><dd>${enLinea ? "en vivo" : cuando(ult)}</dd></div>`;
+    if (meta.dataset.h !== html) { meta.dataset.h = html; meta.innerHTML = html; }
+  }
   pon("v-temp", l ? num(l.temp, 1) : "—");
   pon("v-turb", l ? num(l.turb, 0) : "—");
-  pon("v-temp-lim", c ? `Límite ${num(c.tempMax, 0)} °C · vuelve bajo ${num(c.tempMax - c.histTemp, 0)}` : "");
+  pon("v-temp-lim", c ? `Límite ${num(c.tempMax, 0)} °C` : "");
   pon("v-turb-lim", c ? `Límite ${num(c.turbMax, 0)} % · ${num(l?.volt, 2)} V` : "");
-  const ult = S.raw.slice(-120);
-  const st = $("#spark-temp"); if (st) st.innerHTML = mini(ult, "temp", COLOR.agua, c?.tempMax);
-  const su = $("#spark-turb"); if (su) su.innerHTML = mini(ult, "turb", COLOR.agua, c?.turbMax);
-  const v = S.estado?.valvula;
-  $("#cuadro-der")?.classList.toggle("abierta", v === "DER");
-  $("#cuadro-izq")?.classList.toggle("abierta", v === "IZQ");
-  pon("v-der", v === "DER" ? "Abierta" : "Cerrada");
-  pon("v-izq", v === "IZQ" ? "Abierta" : "Cerrada");
-  pon("v-valv-info", S.estado ? `${S.estado.cambiosValvula ?? 0} cambios${S.estado.valvulaDesde ? " · último " + hora(S.estado.valvulaDesde * 1000) : ""}${S.estado.reles === false ? " · relés deshabilitados" : ""}` : "");
+  medidor("r-temp", "l-temp", l?.temp, c?.tempMax, 60);
+  medidor("r-turb", "l-turb", l?.turb, c?.turbMax, 100);
+  const v = est?.valvula;
+  for (const [id, lado] of [["der", "DER"], ["izq", "IZQ"]]) {
+    $("#valv-" + id)?.classList.toggle("abierta", v === lado);
+    pon("v-" + id, est ? (v === lado ? "Abierta" : "Cerrada") : "—");
+  }
+  pon("v-valv-info", est ? `${est.cambiosValvula ?? 0} cambios${est.valvulaDesde ? " · último " + cuando(est.valvulaDesde * 1000) : ""}${est.reles === false ? " · relés deshabilitados" : ""}` : "");
 }
 
 function bloqueModo() {
@@ -467,7 +522,7 @@ function bloqueModo() {
 }
 
 function bloqueSesion() {
-  return `<div class="panel"><div class="panel-cab"><h2>Sesión</h2><span class="tenue num" id="s-dur"></span></div>
+  return `<div class="panel vivo"><div class="panel-cab"><h2>Sesión</h2><span class="tenue num" id="s-dur"></span></div>
     <div class="reparto" id="s-reparto"></div>
     <dl class="datos">
       <dt>Tiempo apta</dt><dd id="s-apta">—</dd><dt>Tiempo no apta</dt><dd id="s-noapta">—</dd><dt>Tiempo en falla</dt><dd id="s-falla">—</dd>
@@ -502,12 +557,12 @@ VISTAS.inicio = {
   titulo: "Centro de control",
   html: () => `${bloqueIndicadores()}
     <div class="fila">
-      <div class="col-2 panel">
+      <div class="col-1 orden-1" style="display:flex;flex-direction:column;gap:inherit">${bloqueModo()}
+        <div class="panel"><div class="panel-cab"><h2>Últimos eventos</h2><a href="#registro">Ver registro</a></div><ul class="lista" id="ev-inicio"></ul></div>
+      </div>
+      <div class="col-2 panel vivo orden-2">
         <div class="panel-cab"><h2>Últimos 15 minutos</h2><a href="#graficas">Ver gráficas</a></div>
         <div id="g-inicio-temp"></div><div id="g-inicio-turb"></div>
-      </div>
-      <div class="col-1" style="display:flex;flex-direction:column;gap:18px">${bloqueModo()}
-        <div class="panel"><div class="panel-cab"><h2>Últimos eventos</h2><a href="#registro">Ver registro</a></div><ul class="lista" id="ev-inicio"></ul></div>
       </div>
     </div>
     <div class="fila"><div class="col-1">${bloqueSesion()}</div><div class="col-1">${bloqueConexionCorto()}</div></div>`,
@@ -537,10 +592,10 @@ function bloqueConexionCorto() {
 function calidadRssi(r) { return r === undefined || r === null ? "—" : `${r} dBm · ${r > -60 ? "buena" : r > -72 ? "regular" : "débil"}`; }
 function actualizarConexionCorto() {
   pon("k-esp", espEnLinea() ? "En línea" : S.espConexion === "desconectado" ? "Desconectado" : "Sin datos");
-  pon("k-ult", S.ultimaLectura ? `hace ${hace(S.ultimaLectura)}` : "—");
+  pon("k-ult", espEnLinea() ? `hace ${hace(S.ultimaLectura)}` : cuando(ultimoDato()));
   pon("k-lat", S.latencia !== null ? `${S.latencia} ms` : "—");
   pon("k-rssi", calidadRssi(S.diag?.rssi));
-  pon("k-up", S.diag ? duracion(S.diag.uptimeS + (Date.now() - S.diag.recibido) / 1000) : "—");
+  pon("k-up", S.diag && espEnLinea() ? duracion(S.diag.uptimeS + (Date.now() - S.diag.recibido) / 1000) : "—");
   pon("k-fw", S.diag?.fw ?? "—");
 }
 
@@ -702,6 +757,67 @@ VISTAS.registro = {
   },
 };
 
+// ---------- Firmware (actualizar desde el panel) ----------
+// GitHub Actions publica firmware/firmware.bin y firmware/version.json en este mismo sitio.
+S.fwDisponible = null;     // {version, fecha, bytes}
+S.actualizando = null;     // {objetivo, desde}
+const ESPERA_ACTUALIZACION_MS = 4 * 60e3;
+
+/** Compara "2.10" con "2.9" por partes numéricas. */
+function compararVersion(a, b) {
+  const x = String(a).split(".").map(Number), y = String(b).split(".").map(Number);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return Math.sign(d); }
+  return 0;
+}
+async function cargarFwDisponible() {
+  try {
+    const r = await fetch(`firmware/version.json?t=${Date.now()}`, { cache: "no-store" });
+    S.fwDisponible = r.ok ? await r.json() : null;
+  } catch { S.fwDisponible = null; }
+  programarRender();
+}
+function bloqueFirmware() {
+  return `<div class="panel" id="p-firmware"><div class="panel-cab"><h2>Firmware</h2><span class="tenue" id="f-estado"></span></div>
+    <dl class="datos"><dt>Instalada en el ESP32</dt><dd id="f-inst">—</dd><dt>Publicada en GitHub</dt><dd id="f-disp">—</dd></dl>
+    <button class="btn btn-primario" id="b-actualizar" disabled>Actualizar</button>
+    <span class="tenue" id="f-ayuda">Al actualizar, el ESP32 cierra las válvulas, descarga la versión publicada (~1 MB) y se reinicia solo.</span></div>`;
+}
+function montarFirmware() {
+  cargarFwDisponible();
+  $("#b-actualizar").onclick = async () => {
+    const v = S.fwDisponible?.version;
+    if (!v || !(await confirmar(`¿Actualizar a la versión ${v}?`, "El ESP32 cierra las dos válvulas, descarga la versión nueva y se reinicia. Tarda 1 a 2 minutos; no lo apagues mientras tanto.", "Actualizar"))) return;
+    const r = await comando("actualizar");
+    if (r.ok) { S.actualizando = { objetivo: v, desde: Date.now() }; programarRender(); }
+  };
+}
+function actualizarFirmware() {
+  const inst = S.diag?.fw, disp = S.fwDisponible, b = $("#b-actualizar");
+  if (!b) return;
+  pon("f-inst", inst ? `v${inst}` : "—");
+  pon("f-disp", disp ? `v${disp.version} · ${cuando(Date.parse(disp.fecha))}` : "Aún no hay versión publicada");
+  const hayNueva = inst && disp && compararVersion(disp.version, inst) > 0;
+  const soporta = inst && compararVersion(inst, "2.1") >= 0;    // "actualizar" existe desde la 2.1
+  let estado = "";
+  if (S.actualizando) estado = "Actualizando…";
+  else if (!inst || !disp) estado = "";
+  else if (!soporta) estado = "Esta versión se actualiza por cable";
+  else estado = hayNueva ? "Hay una versión nueva" : "Al día";
+  pon("f-estado", estado);
+  b.textContent = S.actualizando ? "Actualizando…" : hayNueva ? `Actualizar a v${disp.version}` : disp ? `Reinstalar v${disp.version}` : "Actualizar";
+  b.disabled = !!S.actualizando || !espEnLinea() || !disp || !soporta;
+}
+/** Seguimiento: termina cuando el ESP32 vuelve con la versión nueva, o falla. */
+function revisarActualizacion() {
+  const a = S.actualizando;
+  if (!a) return;
+  if (S.diag?.fw && compararVersion(S.diag.fw, a.objetivo) === 0 && S.diag.recibido > a.desde + 5000) {
+    S.actualizando = null; aviso(`ESP32 actualizado a la versión ${a.objetivo}.`, "ok");
+  } else if (Date.now() - a.desde > ESPERA_ACTUALIZACION_MS) {
+    S.actualizando = null; aviso("El ESP32 no volvió con la versión nueva. Revisa el registro o el Monitor Serie.", "error");
+  }
+}
+
 // ---------- Diagnóstico ----------
 VISTAS.diagnostico = {
   titulo: "Diagnóstico",
@@ -716,10 +832,11 @@ VISTAS.diagnostico = {
       <dt>Memoria libre / mínima</dt><dd id="d-heap">—</dd><dt>Watchdog</dt><dd id="d-wdt">—</dd><dt>Relés (pin der. / izq.)</dt><dd id="d-reles">—</dd><dt>Diagnóstico recibido</dt><dd id="d-recib">—</dd></dl></div>
     <div class="col-1 panel"><h2>Sensores y pantalla</h2><dl class="datos">
       <dt>Termocupla (MAX6675)</dt><dd id="d-stemp">—</dd><dt>Sensor de turbidez</dt><dd id="d-sturb">—</dd><dt>Voltaje del sensor</dt><dd id="d-volt">—</dd><dt>Pantalla LCD (I2C)</dt><dd id="d-lcd">—</dd></dl>
-      <span class="tenue">Voltaje menor a 0,1 V: cable del sensor suelto. Termocupla sin lectura: revisar el conector del MAX6675.</span></div></div>`,
-  montar() { $("#b-ping2").onclick = medirLatencia; },
+      <span class="tenue">Voltaje menor a 0,1 V: cable del sensor suelto. Termocupla sin lectura: revisar el conector del MAX6675.</span></div></div>
+    ${bloqueFirmware()}`,
+  montar() { $("#b-ping2").onclick = medirLatencia; montarFirmware(); },
   update() {
-    actualizarConexionCorto();
+    actualizarConexionCorto(); actualizarFirmware();
     const d = S.diag, ok = (v) => (v === "ok" ? "Funciona" : v === "falla" ? "Falla" : "—");
     pon("d-broker", S.conectado ? "Conectado" : "Reconectando…");
     if (!d) return;
@@ -797,15 +914,19 @@ function render() {
   const chip = (ok, texto) => `<span class="chip"><span class="punto ${ok === null ? "" : ok ? "ok" : "mal"}"></span>${texto}</span>`;
   $("#chips").innerHTML =
     chip(S.conectado, S.conectado ? "Broker" : "Broker: reconectando") +
-    chip(online, online ? "ESP32 en línea" : S.espConexion === "desconectado" ? "ESP32 desconectado" : "ESP32 sin datos") +
+    chip(online, online ? "ESP32 en línea" : S.actualizando ? "ESP32 actualizando" : S.espConexion === "desconectado" ? "ESP32 desconectado" : "ESP32 sin datos") +
     (S.latencia !== null && online ? chip(null, `${S.latencia} ms`) : "") +
     (S.config ? `<span class="chip solo-pc">${esc(S.config.rubros?.find((r) => r.id === S.config.rubro)?.nombre ?? S.config.rubro)}</span>` : "");
 
-  const av = $("#aviso-conexion");
-  if (!S.conectado) { av.textContent = "Sin conexión con el broker. Reintentando cada 3 s; revisa el internet de este dispositivo."; av.classList.remove("oculto"); }
+  document.body.classList.toggle("esp-offline", !online);
+  const av = $("#aviso-conexion"), ult = ultimoDato();
+  if (S.actualizando) {
+    av.textContent = `Actualizando el ESP32 a la versión ${S.actualizando.objetivo}: válvulas cerradas, vuelve solo en 1 a 2 min. No lo apagues.`;
+    av.classList.remove("oculto");
+  } else if (!S.conectado) { av.textContent = "Este dispositivo no tiene conexión con el servidor. Reintentando cada 3 s; revisa su internet."; av.classList.remove("oculto"); }
   else if (!online) {
-    av.textContent = S.ultimaLectura
-      ? `El ESP32 no envía datos desde las ${hora(S.ultimaLectura, false)}. Los botones se activan cuando vuelva.`
+    av.textContent = ult
+      ? `El ESP32 está desconectado desde ${cuando(ult)}. Lo que ves es el último dato que envió; los botones se activan cuando vuelva.`
       : "Esperando datos del ESP32. Revisa que esté encendido y conectado al hotspot.";
     av.classList.remove("oculto");
   } else av.classList.add("oculto");
@@ -814,6 +935,7 @@ function render() {
 }
 
 function mostrarApp() {
+  cargarFwDisponible();
   $("#acceso").classList.add("oculto");
   $("#app").classList.remove("oculto");
   navegar();
@@ -828,7 +950,8 @@ function errorAcceso(msg) {
 window.addEventListener("hashchange", navegar);
 let eraCelular = esCelular();
 window.addEventListener("resize", () => { if (esCelular() !== eraCelular) { eraCelular = esCelular(); if (vistaActual) navegar(); } });
-setInterval(() => { if (minutoActual && Math.floor(Date.now() / 60e3) * 60e3 !== minutoActual.t) cerrarMinuto(); render(); }, 1000);
+setInterval(() => { if (minutoActual && Math.floor(Date.now() / 60e3) * 60e3 !== minutoActual.t) cerrarMinuto(); revisarActualizacion(); render(); }, 1000);
+setInterval(cargarFwDisponible, 5 * 60e3);
 setInterval(medirLatencia, 15000);
 window.addEventListener("beforeunload", () => guardar(CLAVE.minutos, S.minutos));
 
