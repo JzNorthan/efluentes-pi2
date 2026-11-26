@@ -2,27 +2,27 @@
 //  ÍNDICE                                                      Línea
 // -------------------------------------------------------------------
 //  CONFIGURACIÓN (editar solo aquí)
-//    1. Pines ...................................................  60
-//    2. Hardware ................................................  82
-//    3. Calibración de turbidez (valores iniciales) .............  99
-//    4. Límites y rubros ........................................ 109
-//    5. Tiempos ................................................. 137
-//    6. Red y MQTT .............................................. 160
+//    1. Pines ...................................................  66
+//    2. Hardware ................................................  87
+//    3. Calibración de turbidez (valores iniciales) ............. 104
+//    4. Límites y rubros ........................................ 114
+//    5. Tiempos ................................................. 142
+//    6. Red y MQTT .............................................. 165
 //  CÓDIGO
-//    7. Objetos y estado global ................................. 181
-//    8. Memoria flash (umbrales, rubro, calibración) ............ 244
-//    9. Estadísticas de sesión .................................. 287
-//   10. Red: cola de mensajes y tarea de conexión ............... 338
-//   11. Publicación de mensajes (JSON) .......................... 435
-//   12. Actuadores (relés, LEDs, buzzer) ........................ 582
-//   13. Pruebas de componentes .................................. 645
-//   14. Sensores ................................................ 723
-//   15. Lógica de decisión ...................................... 770
-//   16. Visualización (LCD y Serial) ............................ 861
-//   17. Comandos (Serial y MQTT) ................................ 972
-//   18. Diagnóstico (watchdog, reinicio) ........................1106
-//   19. setup() .................................................1160
-//   20. loop() ..................................................1206
+//    7. Objetos y estado global ................................. 188
+//    8. Memoria flash (umbrales, rubro, calibración) ............ 252
+//    9. Estadísticas de sesión .................................. 295
+//   10. Red: cola de mensajes y tarea de conexión ............... 346
+//   11. Publicación de mensajes (JSON) .......................... 456
+//   12. Actuadores (relés, LEDs, buzzer) ........................ 603
+//   13. Pruebas de componentes .................................. 674
+//   14. Sensores ................................................ 752
+//   15. Lógica de decisión ...................................... 799
+//   16. Visualización (LCD y Serial) ............................ 890
+//   17. Comandos (Serial y MQTT) ................................1002
+//   18. Diagnóstico (watchdog, reinicio) ........................1136
+//   19. setup() .................................................1190
+//   20. loop() ..................................................1239
 // -------------------------------------------------------------------
 //  COMANDOS (Monitor Serie 115200 o panel web; mismos comandos)
 //    a = automático        1 / 2 / 3 = forzar APTA / NO APTA / FALLA
@@ -35,6 +35,8 @@
 //    cl / cs = capturar voltaje agua limpia / sucia
 //    ping = prueba de conexión           reboot = reiniciar ESP32
 //    h = ayuda
+//  ACTUALIZAR POR WI-FI: Herramientas > Puerto > "pi2-efluentes at <IP>" (mismo
+//  hotspot que la PC). La primera vez se sube por cable.
 //  LIBRERÍAS: MAX6675 library (Adafruit), LiquidCrystal I2C (Frank de
 //  Brabander), PubSubClient (Nick O'Leary), ArduinoJson 7 (Benoit Blanchon)
 // ===================================================================
@@ -46,11 +48,15 @@
 #include <LiquidCrystal_I2C.h>
 #include <max6675.h>
 #include <PubSubClient.h>
+#include <ArduinoOTA.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <esp_task_wdt.h>
 #include <esp_system.h>
 #include "secretos.h"            // Copiar de secretos.ejemplo.h y llenar
+#ifndef OTA_PASS
+#define OTA_PASS ""              // secretos.h antiguo sin OTA_PASS: OTA sin contraseña
+#endif
 
 
 // ###################################################################
@@ -68,9 +74,8 @@ const int PIN_MAX6675_SO  = 25;
 
 // Actuadores
 const int PIN_RELE_DER    = 32;  // Válvula derecha   -> agua APTA
-const int PIN_RELE_IZQ    = 12;  // Válvula izquierda -> agua NO APTA
-                                 // GPIO 12 es strapping pin: si el ESP32 no arranca
-                                 // ("flash read err"), mover a 33.
+const int PIN_RELE_IZQ    = 4;   // Válvula izquierda -> agua NO APTA
+                                 // Probado con prueba_reles. No usar GPIO 12 (strapping pin).
 const int PIN_LED_VERDE   = 23;
 const int PIN_LED_ROJO    = 19;
 const int PIN_BUZZER      = 18;
@@ -162,6 +167,8 @@ const unsigned long PRUEBA_VALVULA_MS = 2000;
 // ===================================================================
 // Credenciales y broker: en secretos.h
 const bool HABILITAR_RED = true;            // false = funciona sin Wi-Fi, solo Serial
+const bool HABILITAR_OTA = true;            // Subir código por Wi-Fi desde Arduino IDE
+const char* NOMBRE_EN_RED = "pi2-efluentes"; // Nombre del puerto de red en Arduino IDE
 const char* TOPICO_BASE  = "pi2/efluente/";
 const unsigned long PUBLICAR_ESTADISTICAS_MS = 30000;
 const unsigned long PUBLICAR_DIAGNOSTICO_MS  = 10000;
@@ -238,6 +245,7 @@ bool lcdResponde = true;
 // Compartido con la tarea de red (otro núcleo)
 volatile bool redConectada   = false;   // Wi-Fi y MQTT listos
 volatile bool pedirRepublicar = false;  // Tras (re)conectar: reenviar retenidos
+volatile bool otaEnCurso = false;       // Actualización por Wi-Fi en curso
 volatile unsigned long msgEnviados = 0, msgRecibidos = 0, reconexiones = 0;
 
 
@@ -375,6 +383,15 @@ bool conectarMqtt() {
   return true;
 }
 
+/** Actualización por Wi-Fi: el ESP32 aparece como puerto de red en Arduino IDE. */
+void iniciarOta() {
+  ArduinoOTA.setHostname(NOMBRE_EN_RED);
+  if (strlen(OTA_PASS) > 0) ArduinoOTA.setPassword(OTA_PASS);
+  ArduinoOTA.onStart([]() { otaEnCurso = true; });            // loop() cierra válvulas
+  ArduinoOTA.onError([](ota_error_t) { otaEnCurso = false; });
+  ArduinoOTA.begin();                                         // Al terminar, reinicia solo
+}
+
 void tareaRed(void*) {
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
@@ -387,7 +404,7 @@ void tareaRed(void*) {
   mqtt.setKeepAlive(MQTT_KEEPALIVE_S);
   mqtt.setCallback(alRecibirMqtt);
 
-  bool ntpIniciado = false;
+  bool ntpIniciado = false, otaIniciado = false;
   unsigned long ultimoIntento = 0, espera = 0;
 
   for (;;) {
@@ -399,6 +416,10 @@ void tareaRed(void*) {
     if (!ntpIniciado) {
       configTzTime(ZONA_HORARIA, SERVIDOR_NTP_1, SERVIDOR_NTP_2);
       ntpIniciado = true;
+    }
+    if (HABILITAR_OTA) {
+      if (!otaIniciado) { iniciarOta(); otaIniciado = true; }
+      ArduinoOTA.handle();               // Durante una subida bloquea esta tarea (no loop())
     }
     if (!mqtt.connected()) {
       redConectada = false;
@@ -617,7 +638,15 @@ void abrirSolo(int pinAbrir) {
   anotarValvula(pinAbrir == PIN_RELE_DER ? DERECHA : IZQUIERDA);
 }
 
+/**
+ * Enciende/apaga el buzzer solo si cambia de estado. tone()/noTone() en el
+ * core 3.x encolan un mensaje a otra tarea: llamarlos en cada loop() llena
+ * la cola, bloquea loop() y dispara el watchdog.
+ */
 void buzzer(bool encendido) {
+  static bool actual = false;
+  if (encendido == actual) return;
+  actual = encendido;
   if (encendido) tone(PIN_BUZZER, FRECUENCIA_BUZZER);
   else           noTone(PIN_BUZZER);
 }
@@ -888,6 +917,7 @@ const char* textoEstado() {
 void lineaLCD(int fila, const char* texto) {
   char buf[LCD_COLUMNAS + 1];
   snprintf(buf, sizeof(buf), "%-*s", LCD_COLUMNAS, texto);
+  if (!lcdResponde) return;           // Sin LCD: cada escritura I2C esperaría su timeout
   lcd.setCursor(0, fila);
   lcd.print(buf);
 }
@@ -1175,9 +1205,10 @@ void setup() {
   analogSetPinAttenuation(PIN_TURBIDEZ, ADC_11db);   // Rango 0 – ~3.1 V
 
   Wire.begin(PIN_LCD_SDA, PIN_LCD_SCL);
-  lcd.init();
-  lcd.backlight();
+  Wire.setTimeOut(20);                // ms por transacción I2C (por defecto 50)
   lcdResponde = probarLcd();
+  if (lcdResponde) { lcd.init(); lcd.backlight(); }
+  else Serial.printf("LCD no detectada en 0x%02X: se sigue sin pantalla\n", LCD_DIRECCION);
 
   reportarReinicio();
   cargarMemoria();
@@ -1188,7 +1219,9 @@ void setup() {
   lineaLCD(1, "Iniciando...");
   digitalWrite(PIN_LED_VERDE, HIGH);                 // Autoprueba visual al encender
   digitalWrite(PIN_LED_ROJO, HIGH);
-  tone(PIN_BUZZER, FRECUENCIA_BUZZER, DURACION_PITIDO_INICIO);
+  buzzer(true);
+  delay(DURACION_PITIDO_INICIO);
+  buzzer(false);
   delay(DURACION_PRUEBA_INICIO);                     // También da tiempo al MAX6675
   digitalWrite(PIN_LED_VERDE, LOW);
   digitalWrite(PIN_LED_ROJO, LOW);
@@ -1208,6 +1241,25 @@ void setup() {
 // ===================================================================
 void loop() {
   esp_task_wdt_reset();
+
+  // Actualización por Wi-Fi: válvulas cerradas y todo en reposo hasta que reinicie
+  static bool reposoOta = false;
+  if (otaEnCurso) {
+    if (!reposoOta) {
+      reposoOta = true;
+      escribirRele(PIN_RELE_DER, false);
+      escribirRele(PIN_RELE_IZQ, false);
+      digitalWrite(PIN_LED_VERDE, LOW);
+      digitalWrite(PIN_LED_ROJO, LOW);
+      buzzer(false);
+      lineaLCD(0, "ACTUALIZANDO");
+      lineaLCD(1, "por Wi-Fi...");
+      Serial.println("Actualizacion por Wi-Fi en curso: valvulas cerradas");
+    }
+    delay(50);
+    return;
+  }
+  reposoOta = false;
   procesarSerial();
   procesarMqtt();
   actualizarPruebas();
@@ -1240,7 +1292,9 @@ void loop() {
   }
   if (millis() - ultimaPubDiagnostico >= PUBLICAR_DIAGNOSTICO_MS) {
     ultimaPubDiagnostico = millis();
+    bool antes = lcdResponde;
     lcdResponde = probarLcd();
+    if (lcdResponde && !antes) { lcd.init(); lcd.backlight(); }   // LCD conectada en caliente
     publicarDiagnostico();
   }
 }

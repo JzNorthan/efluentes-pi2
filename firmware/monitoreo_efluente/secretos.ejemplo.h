@@ -16,6 +16,9 @@
 #define MQTT_USER   "esp32"
 #define MQTT_PASS   "CONTRASEÑA_DEL_USUARIO_ESP32"
 
+// Clave para subir código por Wi-Fi (Arduino IDE la pide al subir)
+#define OTA_PASS    "CLAVE_PARA_ACTUALIZAR"
+
 // Certificado CA del broker (EMQX Cloud → Overview → CA Certificate).
 // Vacío = conexión cifrada pero SIN verificar el certificado del servidor.
 // Para verificarlo, pega el contenido del .crt entre las comillas de R"( … )".
