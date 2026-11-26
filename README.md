@@ -4,6 +4,7 @@ ESP32 que mide temperatura (termocupla K + MAX6675) y turbidez, decide si el agu
 
 ```
 firmware/monitoreo_efluente/   Código del ESP32 (Arduino IDE)
+firmware/prueba_reles/         Prueba mínima de relés, LEDs y buzzer (sin Wi-Fi)
 docs/                          Panel web estático (publicado con GitHub Pages)
 ```
 
