@@ -1,0 +1,53 @@
+# Compila el firmware al subir cambios en firmware/monitoreo_efluente y publica
+# docs/firmware/firmware.bin + version.json en GitHub Pages.
+# El ESP32 lo descarga con el comando "actualizar" (botón en el panel).
+# Se compila con secretos.ejemplo.h: el .bin público NO lleva contraseñas.
+name: Compilar firmware
+
+on:
+  push:
+    branches: [main]
+    paths: ["firmware/monitoreo_efluente/**", ".github/workflows/firmware.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: firmware
+  cancel-in-progress: true
+
+jobs:
+  compilar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: arduino/setup-arduino-cli@v2
+
+      - name: Instalar placa ESP32 y librerías
+        run: |
+          URL=https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core update-index --additional-urls "$URL"
+          arduino-cli core install esp32:esp32 --additional-urls "$URL"
+          arduino-cli lib install "MAX6675 library" "LiquidCrystal I2C" "PubSubClient" "ArduinoJson"
+
+      - name: Compilar sin contraseñas
+        run: |
+          cp firmware/monitoreo_efluente/secretos.ejemplo.h firmware/monitoreo_efluente/secretos.h
+          arduino-cli compile --fqbn esp32:esp32:esp32 --output-dir build firmware/monitoreo_efluente
+
+      - name: Publicar en docs/firmware
+        run: |
+          VERSION=$(grep -oP 'VERSION_FIRMWARE\s*=\s*"\K[^"]+' firmware/monitoreo_efluente/monitoreo_efluente.ino)
+          mkdir -p docs/firmware
+          cp build/monitoreo_efluente.ino.bin docs/firmware/firmware.bin
+          BYTES=$(stat -c%s docs/firmware/firmware.bin)
+          FECHA=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          printf '{"version":"%s","fecha":"%s","commit":"%s","bytes":%s}\n' \
+            "$VERSION" "$FECHA" "${GITHUB_SHA::7}" "$BYTES" > docs/firmware/version.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/firmware
+          git commit -m "Firmware $VERSION compilado" || { echo "Sin cambios"; exit 0; }
+          git push
