@@ -31,6 +31,14 @@ Secciones: Centro de control, Gráficas (5 min a 7 días, marcas, CSV), Control 
 
 El historial de gráficas y el registro se arman en cada navegador mientras el panel está abierto (lecturas por segundo hasta 6 h en memoria; promedio por minuto 7 días guardado en el navegador).
 
+## Actualizar el código sin cable
+
+1. **Una sola vez por cable:** sube la versión 2.1 o superior con `secretos.h` lleno. El ESP32 guarda las claves en su memoria.
+2. **Cambios después:** sube el `.ino` modificado a `firmware/monitoreo_efluente/` en GitHub (sube también `VERSION_FIRMWARE`, por ejemplo de `"2.1"` a `"2.2"`). GitHub Actions lo compila solo, sin contraseñas, y publica `docs/firmware/firmware.bin` (pestaña **Actions** para ver si salió bien).
+3. **En el panel:** Diagnóstico (en el celular, Ajustes) → **Firmware** → **Actualizar a vX**. El ESP32 cierra las válvulas, descarga la versión y se reinicia en 1 a 2 min. También funciona el comando `actualizar`.
+
+Alternativa en la misma red: Arduino IDE → Herramientas → Puerto → `pi2-efluentes` (pide `OTA_PASS`).
+
 ## Contrato MQTT
 
 Prefijo `pi2/efluente/`. Todo en JSON. `t` = hora Unix en segundos (`null` si el ESP32 aún no sincronizó NTP).
@@ -65,4 +73,5 @@ Prefijo `pi2/efluente/`. Todo en JSON. `t` = hora Unix en segundos (`null` si el
 | `x` | Valores de fábrica (rubro PTAR) |
 | `cl` / `cs` | Capturar voltaje de agua limpia / muestra sucia |
 | `ping` | Prueba de conexión (no se registra) |
+| `actualizar` | Descargar e instalar la versión publicada en GitHub |
 | `reboot` | Reiniciar el ESP32 |
