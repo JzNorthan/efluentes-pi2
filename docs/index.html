@@ -3,13 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0E1A1F">
+<meta name="theme-color" content="#13242B">
 <title>Efluentes PI2 — Panel de control</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600&display=swap">
+<script>try{var t=localStorage.getItem("pi2.tema");if(t)document.documentElement.dataset.tema=JSON.parse(t)}catch(e){}</script>
 <link rel="stylesheet" href="styles.css">
 <script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
 <script src="config.js"></script>
 <script src="app.js" defer></script>
 </head>
@@ -18,12 +20,15 @@
 <!-- Acceso -->
 <main id="acceso" class="acceso">
   <form id="form-acceso" autocomplete="on">
-    <h1>Efluentes PI2</h1>
+    <h1><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3v10M5 21h22" stroke="var(--agua)" stroke-width="4" stroke-linecap="round" fill="none"/><path d="M16 13v8" stroke="var(--agua)" stroke-width="4" fill="none"/><path d="M9 17l4 4-4 4zM23 17l-4 4 4 4z" fill="var(--texto)"/></svg>Efluentes PI2</h1>
     <p class="tenue" style="margin:0">Panel de control del prototipo. Ingresa con el usuario del panel en el broker.</p>
     <label class="campo"><span class="tenue">Usuario</span><input id="acc-usuario" name="username" autocomplete="username" required></label>
     <label class="campo"><span class="tenue">Contraseña</span><input id="acc-clave" name="password" type="password" autocomplete="current-password" required></label>
     <label class="check"><input id="acc-recordar" type="checkbox" checked> Recordar en este dispositivo</label>
     <button class="btn btn-primario" type="submit">Conectar</button>
+    <div class="separador">o, sin ESP32</div>
+    <button class="btn" type="button" id="b-simular">Abrir en modo simulación</button>
+    <p class="tenue" style="margin:0;font-size:12.5px">La simulación genera datos en este navegador para ensayar la demo. No se conecta al broker ni al prototipo.</p>
     <p id="acc-error" class="c-noapta oculto" role="alert" style="margin:0"></p>
   </form>
 </main>
