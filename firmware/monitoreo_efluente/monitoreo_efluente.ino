@@ -2,27 +2,27 @@
 //  ÍNDICE                                                      Línea
 // -------------------------------------------------------------------
 //  CONFIGURACIÓN (editar solo aquí)
-//    1. Pines ...................................................  66
-//    2. Hardware ................................................  87
-//    3. Calibración de turbidez (valores iniciales) ............. 104
-//    4. Límites y rubros ........................................ 114
-//    5. Tiempos ................................................. 142
-//    6. Red y MQTT .............................................. 165
+//    1. Pines ...................................................  68
+//    2. Hardware ................................................  89
+//    3. Calibración de turbidez (valores iniciales) ............. 106
+//    4. Límites y rubros ........................................ 116
+//    5. Tiempos ................................................. 144
+//    6. Red y MQTT .............................................. 167
 //  CÓDIGO
-//    7. Objetos y estado global ................................. 188
-//    8. Memoria flash (umbrales, rubro, calibración) ............ 252
-//    9. Estadísticas de sesión .................................. 295
-//   10. Red: cola de mensajes y tarea de conexión ............... 346
-//   11. Publicación de mensajes (JSON) .......................... 456
-//   12. Actuadores (relés, LEDs, buzzer) ........................ 603
-//   13. Pruebas de componentes .................................. 674
-//   14. Sensores ................................................ 752
-//   15. Lógica de decisión ...................................... 799
-//   16. Visualización (LCD y Serial) ............................ 890
-//   17. Comandos (Serial y MQTT) ................................1002
-//   18. Diagnóstico (watchdog, reinicio) ........................1136
-//   19. setup() .................................................1190
-//   20. loop() ..................................................1239
+//    7. Objetos y estado global ................................. 192
+//    8. Memoria flash (umbrales, rubro, calibración) ............ 263
+//    9. Estadísticas de sesión .................................. 306
+//   10. Red: cola de mensajes y tarea de conexión ............... 357
+//   11. Publicación de mensajes (JSON) .......................... 530
+//   12. Actuadores (relés, LEDs, buzzer) ........................ 678
+//   13. Pruebas de componentes .................................. 749
+//   14. Sensores ................................................ 827
+//   15. Lógica de decisión ...................................... 874
+//   16. Visualización (LCD y Serial) ............................ 965
+//   17. Comandos (Serial y MQTT) ................................1077
+//   18. Diagnóstico (watchdog, reinicio) ........................1218
+//   19. setup() .................................................1272
+//   20. loop() ..................................................1322
 // -------------------------------------------------------------------
 //  COMANDOS (Monitor Serie 115200 o panel web; mismos comandos)
 //    a = automático        1 / 2 / 3 = forzar APTA / NO APTA / FALLA
@@ -34,6 +34,7 @@
 //    kRUBRO = elegir rubro (ktextil)     x = umbrales de fábrica
 //    cl / cs = capturar voltaje agua limpia / sucia
 //    ping = prueba de conexión           reboot = reiniciar ESP32
+//    actualizar = descargar e instalar la última versión publicada en GitHub
 //    h = ayuda
 //  ACTUALIZAR POR WI-FI: Herramientas > Puerto > "pi2-efluentes at <IP>" (mismo
 //  hotspot que la PC). La primera vez se sube por cable.
@@ -49,6 +50,7 @@
 #include <max6675.h>
 #include <PubSubClient.h>
 #include <ArduinoOTA.h>
+#include <HTTPUpdate.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <esp_task_wdt.h>
@@ -87,7 +89,7 @@ const int PIN_LCD_SCL     = 22;
 // ===================================================================
 // 2. HARDWARE
 // ===================================================================
-const char* VERSION_FIRMWARE  = "2.0";
+const char* VERSION_FIRMWARE  = "2.1";
 
 const bool RELE_ACTIVO_EN_LOW = false;  // Módulos KY-019 se activan en HIGH.
                                         // Si el relé actúa invertido -> true.
@@ -169,6 +171,8 @@ const unsigned long PRUEBA_VALVULA_MS = 2000;
 const bool HABILITAR_RED = true;            // false = funciona sin Wi-Fi, solo Serial
 const bool HABILITAR_OTA = true;            // Subir código por Wi-Fi desde Arduino IDE
 const char* NOMBRE_EN_RED = "pi2-efluentes"; // Nombre del puerto de red en Arduino IDE
+// Versión publicada por GitHub Actions; el comando "actualizar" la descarga
+const char* URL_FIRMWARE  = "https://jznorthan.github.io/efluentes-pi2/firmware/firmware.bin";
 const char* TOPICO_BASE  = "pi2/efluente/";
 const unsigned long PUBLICAR_ESTADISTICAS_MS = 30000;
 const unsigned long PUBLICAR_DIAGNOSTICO_MS  = 10000;
@@ -246,6 +250,13 @@ bool lcdResponde = true;
 volatile bool redConectada   = false;   // Wi-Fi y MQTT listos
 volatile bool pedirRepublicar = false;  // Tras (re)conectar: reenviar retenidos
 volatile bool otaEnCurso = false;       // Actualización por Wi-Fi en curso
+volatile bool pedirActualizacion = false;   // Comando "actualizar" desde el panel
+volatile unsigned long horaPedidoActualizacion = 0;
+char errorActualizacion[96] = "";      // Se publica como evento al reconectar
+
+// Credenciales en uso (sección 8). Se guardan en la flash para que la versión
+// pública que se descarga por "actualizar" no necesite llevar contraseñas.
+char credSsid[33] = "", credPass[65] = "", credMqttPass[65] = "", credOtaPass[33] = "";
 volatile unsigned long msgEnviados = 0, msgRecibidos = 0, reconexiones = 0;
 
 
@@ -374,7 +385,7 @@ bool conectarMqtt() {
   char id[32], willTopico[48];
   snprintf(id, sizeof(id), "pi2-esp32-%06llx", (unsigned long long)(ESP.getEfuseMac() & 0xFFFFFF));
   snprintf(willTopico, sizeof(willTopico), "%sconexion", TOPICO_BASE);
-  if (!mqtt.connect(id, MQTT_USER, MQTT_PASS, willTopico, 1, true, "{\"estado\":\"desconectado\"}"))
+  if (!mqtt.connect(id, MQTT_USER, credMqttPass, willTopico, 1, true, "{\"estado\":\"desconectado\"}"))
     return false;
   char t[48];
   snprintf(t, sizeof(t), "%scomandos", TOPICO_BASE);
@@ -383,10 +394,12 @@ bool conectarMqtt() {
   return true;
 }
 
+void actualizarDesdeInternet();
+
 /** Actualización por Wi-Fi: el ESP32 aparece como puerto de red en Arduino IDE. */
 void iniciarOta() {
   ArduinoOTA.setHostname(NOMBRE_EN_RED);
-  if (strlen(OTA_PASS) > 0) ArduinoOTA.setPassword(OTA_PASS);
+  if (strlen(credOtaPass) > 0) ArduinoOTA.setPassword(credOtaPass);
   ArduinoOTA.onStart([]() { otaEnCurso = true; });            // loop() cierra válvulas
   ArduinoOTA.onError([](ota_error_t) { otaEnCurso = false; });
   ArduinoOTA.begin();                                         // Al terminar, reinicia solo
@@ -395,7 +408,7 @@ void iniciarOta() {
 void tareaRed(void*) {
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  WiFi.begin(credSsid, credPass);
 
   if (strlen(MQTT_CA) > 0) clienteTls.setCACert(MQTT_CA);
   else                     clienteTls.setInsecure();     // Cifrado sin verificar el servidor
@@ -442,8 +455,69 @@ void tareaRed(void*) {
     while (xQueueReceive(colaSalida, &m, 0) == pdTRUE) {
       if (mqtt.publish(m.topico, m.datos, m.retenido)) msgEnviados++;
     }
+    // Espera 1,5 s tras el pedido para que salga la respuesta al panel
+    if (pedirActualizacion && millis() - horaPedidoActualizacion > 1500) {
+      pedirActualizacion = false;
+      actualizarDesdeInternet();
+    }
     vTaskDelay(pdMS_TO_TICKS(10));
   }
+}
+
+/**
+ * Descarga URL_FIRMWARE y la instala. Si sale bien, reinicia con la versión
+ * nueva; si falla, sigue con la actual y guarda el error para el registro.
+ * Corre en la tarea de red; loop() cierra las válvulas mientras tanto.
+ */
+void actualizarDesdeInternet() {
+  otaEnCurso = true;
+  vTaskDelay(pdMS_TO_TICKS(300));                 // loop() deja todo en reposo
+  mqtt.disconnect();
+  clienteTls.stop();                              // Libera memoria para la descarga
+  redConectada = false;
+
+  WiFiClientSecure cliente;
+  cliente.setInsecure();
+  httpUpdate.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  httpUpdate.rebootOnUpdate(true);
+  Serial.printf("Descargando %s\n", URL_FIRMWARE);
+  t_httpUpdate_return r = httpUpdate.update(cliente, URL_FIRMWARE);
+
+  // Solo se llega aquí si falló (si salió bien, reinicia dentro de update)
+  snprintf(errorActualizacion, sizeof(errorActualizacion), "Actualizacion fallida: %s",
+           r == HTTP_UPDATE_NO_UPDATES ? "sin version nueva" : httpUpdate.getLastErrorString().c_str());
+  Serial.println(errorActualizacion);
+  otaEnCurso = false;
+}
+
+/** @return true si el texto es un dato real (no vacío ni el texto de la plantilla). */
+bool esDatoReal(const char* s) {
+  return s[0] != '\0' && strncmp(s, "NOMBRE_DEL", 10) != 0 &&
+         strncmp(s, "CLAVE_", 6) != 0 && strncmp(s, "CONTRASE", 8) != 0;
+}
+
+/**
+ * Credenciales: si secretos.h trae datos reales, se guardan en la flash; si no
+ * (versión descargada por "actualizar"), se usan las ya guardadas.
+ */
+void cargarCredenciales() {
+  struct { const char* clave; const char* deSecretos; char* destino; size_t tam; } campos[] = {
+    { "ssid", WIFI_SSID, credSsid,     sizeof(credSsid) },
+    { "wpass", WIFI_PASS, credPass,    sizeof(credPass) },
+    { "mpass", MQTT_PASS, credMqttPass, sizeof(credMqttPass) },
+    { "opass", OTA_PASS,  credOtaPass,  sizeof(credOtaPass) },
+  };
+  memoria.begin("cred", false);
+  for (auto& c : campos) {
+    if (esDatoReal(c.deSecretos)) {
+      if (memoria.getString(c.clave, "") != c.deSecretos) memoria.putString(c.clave, c.deSecretos);
+      strlcpy(c.destino, c.deSecretos, c.tam);
+    } else {
+      strlcpy(c.destino, memoria.getString(c.clave, "").c_str(), c.tam);
+    }
+  }
+  memoria.end();
+  if (credSsid[0] == '\0') Serial.println("SIN CREDENCIALES WI-FI: subir por cable con secretos.h lleno");
 }
 
 void iniciarRed() {
@@ -559,6 +633,7 @@ void publicarDiagnostico() {
   JsonDocument doc;
   ponerHora(doc, "t", horaActual());
   doc["fw"]          = VERSION_FIRMWARE;
+  doc["fwUrl"]       = URL_FIRMWARE;
   doc["uptimeS"]     = millis() / 1000;
   doc["heap"]        = ESP.getFreeHeap();
   doc["heapMin"]     = ESP.getMinFreeHeap();
@@ -994,7 +1069,7 @@ void mostrarAyuda() {
   Serial.println("  lv/lr = LED verde/rojo  bz = buzzer  lcd = pantalla  auto = autoprueba");
   Serial.println("  m = silenciar alarma   s = estado   e = estadisticas   r = reiniciar estad.");
   Serial.println("  p = umbrales   tNN / uNN = temp / turbidez max   kRUBRO = rubro   x = fabrica");
-  Serial.println("  cl / cs = capturar agua limpia / sucia   ping   reboot   h = ayuda");
+  Serial.println("  cl / cs = capturar agua limpia / sucia   ping   reboot   actualizar   h = ayuda");
   Serial.println();
 }
 
@@ -1062,6 +1137,13 @@ void ejecutarComando(const char* linea, const char* origen, const char* id) {
   else if (!strcmp(cmd, "cl"))     { ok = capturarCalibracion(true, detalle, sizeof(detalle)); }
   else if (!strcmp(cmd, "cs"))     { ok = capturarCalibracion(false, detalle, sizeof(detalle)); }
   else if (!strcmp(cmd, "ping"))   { strcpy(detalle, "pong"); registrar = false; }
+  else if (!strcmp(cmd, "actualizar")) {
+    if (!redConectada) { ok = false; strcpy(detalle, "Sin conexion a internet"); }
+    else {
+      pedirActualizacion = true; horaPedidoActualizacion = millis();
+      strcpy(detalle, "Descargando version nueva; vuelve en 1 a 2 min");
+    }
+  }
   else if (!strcmp(cmd, "reboot")) { strcpy(detalle, "Reiniciando en 1 s"); reiniciarPendiente = true; horaReinicio = millis(); }
   else if (!strcmp(cmd, "a")) {
     modoManual = false; estadoCandidato = INICIANDO; contadorCandidato = 0;
@@ -1213,6 +1295,7 @@ void setup() {
   reportarReinicio();
   cargarMemoria();
   reiniciarEstadisticas();
+  cargarCredenciales();
   if (HABILITAR_RED) iniciarRed();
 
   lineaLCD(0, "Monitoreo agua");
@@ -1271,6 +1354,7 @@ void loop() {
     pedirRepublicar = false;
     publicarEstado(); publicarConfig(); publicarEstadisticas(); publicarDiagnostico();
     publicarEvento("Sistema", "Conectado al broker", "ESP32");
+    if (errorActualizacion[0]) { publicarEvento("Sistema", errorActualizacion, "ESP32"); errorActualizacion[0] = '\0'; }
   }
 
   if (millis() - ultimoTiempoLectura < INTERVALO_LECTURA) return;

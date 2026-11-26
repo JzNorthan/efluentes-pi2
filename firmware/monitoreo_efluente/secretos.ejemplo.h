@@ -3,6 +3,8 @@
 //  1. Copia este archivo como "secretos.h" en la misma carpeta.
 //  2. Llena tus datos en secretos.h.
 //  3. secretos.h NO se sube a GitHub (está en .gitignore).
+//  4. Al subirlo por cable, el ESP32 guarda estos datos en su memoria. Las
+//     versiones que se instalan con "actualizar" (sin contraseñas) los usan.
 // ===================================================================
 #pragma once
 
